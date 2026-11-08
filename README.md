@@ -30,6 +30,13 @@ For building on Linux, you may need to run `wails build -tags webkit2_41`.
 
 ## Launcher changes
 
+### Version 2.0.4 — November 8, 2026
+
+- Removed the visible "Launch version" label above the dropdown. The dropdown retains an accessible name.
+- Rebuilt the Windows EXE: [AlphaRingLauncher_Windows_v2.0.4.exe](https://github.com/oraclesod/alpharing-launcher-v2/releases/download/v2.0.4/AlphaRingLauncher_Windows_v2.0.4.exe), SHA-256 `B2A33F3CEDFA1672F9B9F90AB32F13E36BDD1317EE923A5242613B593CEC39AE`. A local copy is in `../Launcher Builds/`.
+
+Validation: Wails production build passed; the EXE reports file and product version 2.0.4. Live MCC launch remains to be checked on a game machine.
+
 ### Version 2.0.3 — November 8, 2026
 
 - Added the launch version dropdown, Active status, explicit Install/Uninstall, and a Launch button enabled only for the installed selection.

@@ -61,12 +61,6 @@ main {
   gap: 12px;
 }
 
-.source-label {
-  color: white;
-  font-size: 18px;
-  text-align: left;
-}
-
 .source-select,
 .menu-button {
   padding: 12px 28px;
@@ -147,7 +141,6 @@ main {
 }
 
 @media screen and (min-width: 1000px) {
-  .source-label,
   .source-select,
   .menu-button {
     font-size: 26px;

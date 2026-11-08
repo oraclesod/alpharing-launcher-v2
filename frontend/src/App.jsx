@@ -259,9 +259,9 @@ function App({ buildInfo = "" }) {
         <img className="logo" src={alphaRingLogo} alt="AlphaRing" />
         {showLog ? <div className="log-panel" style={logPosition ?? undefined}><p className="log-message">{log || "Starting Up..."}</p></div> : (
           <div className="menu">
-            <label className="source-label" htmlFor="launch-source">Launch version</label>
             <select
               id="launch-source"
+              aria-label="Version"
               ref={(element) => { controlRefs.current[0] = element; }}
               className={`source-select${selectedIndex === 0 ? " selected" : ""}`}
               value={installState.selected}
