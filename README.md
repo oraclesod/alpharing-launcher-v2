@@ -1,5 +1,7 @@
 # AlphaRing Launcher
-<img width="1005" height="757" alt="image" src="https://github.com/user-attachments/assets/f0936361-728f-45af-9073-d6347b16b4ef" />
+
+![AlphaRing Launcher main screen](assets/main.png)
+
 This launcher can install either [MegaBit's AlphaRing](https://github.com/megabitt01/AlphaRing) or [Kirkland's experimental fork](https://github.com/kirklandsig/AlphaRing) for Halo: The Master Chief Collection. It can also launch unmodded MCC with anti-cheat on.
 
 ## Installation
