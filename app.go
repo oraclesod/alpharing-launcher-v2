@@ -3,18 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -54,7 +50,6 @@ const (
 	modDLLName     = "WTSAPI32.dll"
 	configFileName = "launcher.cfg"
 	workshopAppID  = 976730
-	releaseURL     = "https://api.github.com/repos/megabitt01/AlphaRing/releases/latest"
 )
 
 var workshopItems = []uint64{3686670451, 3730810482}
@@ -101,7 +96,7 @@ func defaultGamePath() string {
 // promptDirectory/promptFile).
 type config map[string]string
 
-var configKeys = []string{"gamePath", "steamPath"}
+var configKeys = []string{"gamePath", "steamPath", "selectedSource", "installedSource", "installedTag", "installedHash"}
 
 func readConfig() (config, error) {
 	path := configPath()
@@ -327,107 +322,6 @@ func (a *App) ensureWorkshopItems(gamePath string) error {
 	return sw.subscribeAndDownload(a, gamePath, missing)
 }
 
-type release struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	} `json:"assets"`
-}
-
-func downloadAsset(client *http.Client, url string) ([]byte, error) {
-	request, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("User-Agent", "AlphaRing-Launcher")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("GitHub returned %s", response.Status)
-	}
-	return io.ReadAll(response.Body)
-}
-
-// latestAsset downloads the latest AlphaRing mod DLL and, if the release also
-// publishes a "<dll>.sha256" checksum asset, verifies the download against it.
-// verified reports whether that check actually ran, so callers can warn when
-// a release doesn't yet publish a checksum to check against.
-func latestAsset() (dll []byte, tag string, verified bool, err error) {
-	client := &http.Client{Timeout: 2 * time.Minute}
-	request, err := http.NewRequest(http.MethodGet, releaseURL, nil)
-	if err != nil {
-		return nil, "", false, err
-	}
-	request.Header.Set("User-Agent", "AlphaRing-Launcher")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, "", false, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", false, fmt.Errorf("GitHub returned %s", response.Status)
-	}
-	var latest release
-	if err := json.NewDecoder(response.Body).Decode(&latest); err != nil {
-		return nil, "", false, err
-	}
-
-	var dllURL, checksumURL string
-	for _, asset := range latest.Assets {
-		switch asset.Name {
-		case modDLLName:
-			dllURL = asset.URL
-		case modDLLName + ".sha256":
-			checksumURL = asset.URL
-		}
-	}
-	if dllURL == "" {
-		return nil, "", false, fmt.Errorf("%s was not found in the latest release", modDLLName)
-	}
-
-	dll, err = downloadAsset(client, dllURL)
-	if err != nil {
-		return nil, "", false, err
-	}
-
-	if checksumURL == "" {
-		return dll, latest.TagName, false, nil
-	}
-	checksum, err := downloadAsset(client, checksumURL)
-	if err != nil {
-		return nil, "", false, fmt.Errorf("could not download checksum for %s: %w", modDLLName, err)
-	}
-	expected := strings.Fields(string(checksum))
-	if len(expected) == 0 {
-		return nil, "", false, fmt.Errorf("checksum file for %s was empty", modDLLName)
-	}
-	actual := sha256.Sum256(dll)
-	if !strings.EqualFold(expected[0], hex.EncodeToString(actual[:])) {
-		return nil, "", false, fmt.Errorf("checksum mismatch for %s: expected %s, got %x", modDLLName, expected[0], actual)
-	}
-	return dll, latest.TagName, true, nil
-}
-
-func moveModFiles(source, destination string) error {
-	for _, name := range []string{modDLLName, "alpha_ring_menu.bin", "alpha_ring_menu.cfg"} {
-		from := filepath.Join(source, name)
-		if _, err := os.Stat(from); os.IsNotExist(err) {
-			continue
-		}
-		if err := os.MkdirAll(destination, 0755); err != nil {
-			return err
-		}
-		if err := os.Rename(from, filepath.Join(destination, name)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func fileHash(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -439,25 +333,6 @@ func fileHash(path string) ([]byte, error) {
 		return nil, err
 	}
 	return hash.Sum(nil), nil
-}
-
-func (a *App) installMod(modDir string) error {
-	a.log("Downloading the latest AlphaRing release...")
-	bytes, _, verified, err := latestAsset()
-	if err != nil {
-		return err
-	}
-	if verified {
-		a.log("Verified mod checksum")
-	} else {
-		a.log("Warning: no checksum published for this release, installing unverified")
-	}
-	path := filepath.Join(modDir, modDLLName)
-	if err := os.WriteFile(path, bytes, 0644); err != nil {
-		return err
-	}
-	a.log(fmt.Sprintf("Installed mod to %s", path))
-	return nil
 }
 
 func (a *App) launch(gamePath string, vanilla bool) error {
@@ -478,78 +353,6 @@ func (a *App) launch(gamePath string, vanilla bool) error {
 	a.log("Game launched, closing launcher...")
 	wailsruntime.Quit(a.ctx)
 	return nil
-}
-
-func (a *App) checkMod(gamePath string, vanilla bool) error {
-	modDir := filepath.Join(gamePath, modDLLSubpath)
-	backupDir := filepath.Join(gamePath, "alpha_ring")
-	modDLL := filepath.Join(modDir, modDLLName)
-	backupDLL := filepath.Join(backupDir, modDLLName)
-	if vanilla {
-		if _, err := os.Stat(modDLL); err == nil {
-			a.log("Moving mod files aside for vanilla play...")
-			if err := os.MkdirAll(backupDir, 0755); err != nil {
-				return err
-			}
-			if err := os.Rename(modDLL, backupDLL); err != nil {
-				return err
-			}
-		}
-		if err := moveModFiles(modDir, backupDir); err != nil {
-			return err
-		}
-		return a.launch(gamePath, true)
-	}
-	modUpToDate := false
-	if _, err := os.Stat(modDLL); err == nil {
-		a.log("Checking installed mod version...")
-		latest, _, _, err := latestAsset()
-		if err != nil {
-			return err
-		}
-		latestHash := sha256.Sum256(latest)
-		installedHash, err := fileHash(modDLL)
-		if err != nil {
-			return err
-		}
-		modUpToDate = string(installedHash) == string(latestHash[:])
-		if modUpToDate {
-			a.log("Mod is up to date.")
-		}
-	}
-	if !modUpToDate {
-		if _, err := os.Stat(backupDLL); err == nil {
-			a.log("Restoring cached mod files...")
-			if err := os.Rename(backupDLL, modDLL); err != nil {
-				return err
-			}
-		} else if err := a.installMod(modDir); err != nil {
-			return err
-		}
-	}
-	if err := moveModFiles(backupDir, modDir); err != nil {
-		return err
-	}
-	return a.launch(gamePath, false)
-}
-
-func (a *App) Play(vanilla bool) error {
-	a.log(fmt.Sprintf("Running %s version", strings.Title(runtime.GOOS)))
-	a.log("Checking MCC installation...")
-	gamePath, err := a.findGamePath()
-	if err != nil {
-		return err
-	}
-	a.log(fmt.Sprintf("Found game installation at %s", gamePath))
-	if err := a.ensureWorkshopItems(gamePath); err != nil {
-		return err
-	}
-	return a.checkMod(gamePath, vanilla)
-}
-
-func (a *App) LatestModVersion() (string, error) {
-	_, tag, _, err := latestAsset()
-	return tag, err
 }
 
 func (a *App) OpenInstallDir() error {

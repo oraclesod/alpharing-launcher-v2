@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { EventsOn, Quit } from "../wailsjs/runtime/runtime";
-import { BackgroundVideoURLs, LatestModVersion, OpenInstallDir, Play } from "../wailsjs/go/main/App";
+import { BackgroundVideoURLs, GetInstallState, Install, LatestModVersion, OpenInstallDir, Play, RecognizeExisting, SelectSource, Uninstall } from "../wailsjs/go/main/App";
 import alphaRingLogo from "./assets/logo_alpharing.png";
 import bkgVideoMp4 from "./assets/bkgVideo.mp4";
 import bkgVideoWebm from "./assets/bkgVideo.webm";
 import "./App.css";
 
 const CLOSE_DELAY_MS = 1000;
-const ERROR_DISPLAY_MS = 2000;
+const ERROR_DISPLAY_MS = 6000;
 const ACTION_TIMEOUT_MS = 10000;
 const GAMEPAD_AXIS_DEADZONE = 0.65;
 const GAMEPAD_MOVE_COOLDOWN_MS = 200;
@@ -21,31 +21,64 @@ const closeWindowDelayed = () => {
   setTimeout(() => Quit(), CLOSE_DELAY_MS);
 };
 
-const MENU_BUTTONS = [
-  { label: "Play MCC with Anti-Cheat", action: () => Play(true), returnToMenu: true },
-  { label: "Play Splitscreen Halo", action: () => Play(false), returnToMenu: true },
-  { label: "Open Launcher Folder", startMessage: "Opening Folder...", action: () => OpenInstallDir(), returnToMenu: true },
-  { label: "Quit to Desktop", startMessage: "Shutting Down...", action: () => closeWindowDelayed() },
+const SOURCES = [
+  { value: "vanilla", label: "Vanilla MCC" },
+  { value: "megabit", label: "MegaBit AlphaRing" },
+  { value: "kirkland", label: "Kirkland (experimental)" },
 ];
 
-function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
+const installedLabel = (state) => {
+  switch (state.installed) {
+    case "vanilla": return "Active: Vanilla (no mod DLL installed)";
+    case "megabit": return `Active: MegaBit ${state.version}`;
+    case "kirkland": return `Active: Kirkland ${state.version}`;
+    case "unknown": return "Active: Unrecognized mod DLL";
+    default: return "Active: MCC folder not located";
+  }
+};
+
+function App({ buildInfo = "" }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selectedIndexRef = useRef(selectedIndex);
   selectedIndexRef.current = selectedIndex;
   const [showLog, setShowLog] = useState(false);
   const [log, setLog] = useState("");
-  const [modInfo, setModInfo] = useState(initialModInfo);
+  const [installState, setInstallState] = useState({ selected: "vanilla", installed: "unavailable", version: "", gameFound: false });
+  const [availableVersion, setAvailableVersion] = useState("");
   const [logPosition, setLogPosition] = useState(null);
   const backgroundRef = useRef(null);
-  const buttonRefs = useRef([]);
+  const controlRefs = useRef([]);
   const errorRevertTimeoutRef = useRef(null);
   const forceRevertTimeoutRef = useRef(null);
+  const actionRunningRef = useRef(false);
   const videoRef = useRef(null);
   const [videoSources, setVideoSources] = useState(DEFAULT_VIDEO_SOURCES);
 
   useEffect(() => {
-    LatestModVersion().then((tag) => setModInfo(`AlphaRing v${tag}`)).catch((error) => console.error("Error fetching latest AlphaRing version:", error));
+    GetInstallState().then((state) => {
+      setInstallState(state);
+      if (state.installed === "unknown") {
+        RecognizeExisting().then((recognized) => setInstallState((previous) => ({ ...recognized, selected: previous.selected })))
+          .catch((error) => console.error("Could not identify installed mod:", error));
+      }
+    }).catch((error) => console.error("Error checking installed mod:", error));
+    const refresh = () => GetInstallState().then(setInstallState).catch(console.error);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, []);
+
+  useEffect(() => {
+    if (installState.selected === "vanilla") {
+      setAvailableVersion("");
+      return;
+    }
+    let current = true;
+    setAvailableVersion("");
+    LatestModVersion(installState.selected)
+      .then((tag) => { if (current) setAvailableVersion(tag); })
+      .catch((error) => console.error("Error fetching mod version:", error));
+    return () => { current = false; };
+  }, [installState.selected]);
 
   useEffect(() => {
     BackgroundVideoURLs().then((urls) => {
@@ -64,38 +97,82 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
     return () => video.removeEventListener("loadeddata", tryPlay);
   }, [videoSources]);
 
-  const moveSelection = (delta) => setSelectedIndex((selectedIndexRef.current + delta + MENU_BUTTONS.length) % MENU_BUTTONS.length);
+  const canLaunch = installState.selected === installState.installed ||
+    (installState.selected === "vanilla" && installState.installed === "unavailable");
+  const isCurrentMod = installState.selected !== "vanilla" && installState.selected === installState.installed;
+  const actionLabel = installState.selected === "vanilla"
+    ? (installState.installed === "vanilla" || installState.installed === "unavailable" ? "No mod installed" : "Uninstall mod")
+    : (isCurrentMod ? "Uninstall" : "Install");
+  const canChangeInstall = !(installState.selected === "vanilla" &&
+    (installState.installed === "vanilla" || installState.installed === "unavailable"));
+  const menuButtons = [
+    {
+      label: actionLabel,
+      disabled: !canChangeInstall,
+      startMessage: isCurrentMod || installState.selected === "vanilla" ? "Uninstalling mod..." : "Installing mod...",
+      action: () => (isCurrentMod || installState.selected === "vanilla" ? Uninstall() : Install(installState.selected)).then(setInstallState),
+      returnToMenu: true,
+      longRunning: true,
+    },
+    { label: "Launch", disabled: !canLaunch, startMessage: "Launching MCC...", action: () => Play(installState.selected), returnToMenu: true, longRunning: true },
+    { label: "Open Launcher Folder", startMessage: "Opening Folder...", action: () => OpenInstallDir(), returnToMenu: true },
+    { label: "Quit to Desktop", startMessage: "Shutting Down...", action: () => closeWindowDelayed() },
+  ];
+
+  const chooseSource = (source) => {
+    if (actionRunningRef.current || !SOURCES.some((item) => item.value === source)) return;
+    setInstallState((previous) => ({ ...previous, selected: source }));
+    SelectSource(source).then(setInstallState).catch((error) => {
+      console.error("Could not save launch selection:", error);
+      GetInstallState().then(setInstallState).catch(console.error);
+    });
+  };
+
+  const cycleSource = (delta) => {
+    const index = SOURCES.findIndex((item) => item.value === installState.selected);
+    chooseSource(SOURCES[(index + delta + SOURCES.length) % SOURCES.length].value);
+  };
+
+  const moveSelection = (delta) => setSelectedIndex((selectedIndexRef.current + delta + menuButtons.length + 1) % (menuButtons.length + 1));
 
   const runAction = (index) => {
+    if (index === 0) { cycleSource(1); return; }
+    const button = menuButtons[index - 1];
+    if (!button || button.disabled) return;
+    if (actionRunningRef.current) return;
+    actionRunningRef.current = true;
     if (errorRevertTimeoutRef.current) clearTimeout(errorRevertTimeoutRef.current);
     if (forceRevertTimeoutRef.current) clearTimeout(forceRevertTimeoutRef.current);
     setSelectedIndex(index);
-    const button = buttonRefs.current[index];
+    const control = controlRefs.current[index];
     const container = backgroundRef.current;
-    if (button && container) {
-      const buttonRect = button.getBoundingClientRect();
+    if (control && container) {
+      const buttonRect = control.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       setLogPosition({ top: buttonRect.top - containerRect.top, left: buttonRect.left - containerRect.left, width: buttonRect.width });
     }
-    setLog(MENU_BUTTONS[index].startMessage ?? "");
+    setLog(button.startMessage ?? "");
     setShowLog(true);
 
-    // Safety net: no matter what the backend action does (hangs, errors,
-    // takes longer than expected), the UI always becomes usable again after
-    // ACTION_TIMEOUT_MS. `settled` stops a late resolution/rejection of the
-    // original action from re-triggering the log panel after that.
+    // Short actions get a timeout. Play can take minutes for downloads or
+    // wait for a UAC decision, so keep its progress panel active until done.
     let settled = false;
-    forceRevertTimeoutRef.current = setTimeout(() => {
-      settled = true;
-      setShowLog(false);
-    }, ACTION_TIMEOUT_MS);
+    if (!button.longRunning) {
+      forceRevertTimeoutRef.current = setTimeout(() => {
+        settled = true;
+        actionRunningRef.current = false;
+        setShowLog(false);
+      }, ACTION_TIMEOUT_MS);
+    }
 
-    Promise.resolve(MENU_BUTTONS[index].action()).then(() => {
+    Promise.resolve().then(() => button.action()).then(() => {
       if (settled) return;
+      actionRunningRef.current = false;
       clearTimeout(forceRevertTimeoutRef.current);
-      if (MENU_BUTTONS[index].returnToMenu) setShowLog(false);
+      if (button.returnToMenu) setShowLog(false);
     }).catch((error) => {
       if (settled) return;
+      actionRunningRef.current = false;
       clearTimeout(forceRevertTimeoutRef.current);
       console.error("Error:", error);
       setLog(`Error: ${error}`);
@@ -110,11 +187,16 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
 
   useEffect(() => {
     const handleKeyDown = (event) => {
+      if (event.target.tagName === "SELECT") return;
       switch (event.key) {
-        case "ArrowUp": case "ArrowLeft": case "w": case "W": case "a": case "A":
+        case "ArrowUp": case "w": case "W":
           event.preventDefault(); moveSelection(-1); break;
-        case "ArrowDown": case "ArrowRight": case "s": case "S": case "d": case "D":
+        case "ArrowDown": case "s": case "S":
           event.preventDefault(); moveSelection(1); break;
+        case "ArrowLeft": case "a": case "A":
+          event.preventDefault(); selectedIndexRef.current === 0 ? cycleSource(-1) : moveSelection(-1); break;
+        case "ArrowRight": case "d": case "D":
+          event.preventDefault(); selectedIndexRef.current === 0 ? cycleSource(1) : moveSelection(1); break;
         case "Enter": case " ":
           event.preventDefault(); runAction(selectedIndexRef.current); break;
         default: break;
@@ -122,11 +204,11 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [installState]);
 
   useEffect(() => {
     let frame;
-    const held = { prev: false, next: false, confirm: false };
+      const held = { prev: false, next: false, left: false, right: false, confirm: false };
     let lastMoveTime = 0;
     const poll = () => {
       const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -134,8 +216,10 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
       if (gamepad) {
         const axisX = gamepad.axes[0] ?? 0;
         const axisY = gamepad.axes[1] ?? 0;
-        const prev = gamepad.buttons[12]?.pressed || gamepad.buttons[14]?.pressed || axisY < -GAMEPAD_AXIS_DEADZONE || axisX < -GAMEPAD_AXIS_DEADZONE;
-        const next = gamepad.buttons[13]?.pressed || gamepad.buttons[15]?.pressed || axisY > GAMEPAD_AXIS_DEADZONE || axisX > GAMEPAD_AXIS_DEADZONE;
+        const prev = gamepad.buttons[12]?.pressed || axisY < -GAMEPAD_AXIS_DEADZONE;
+        const next = gamepad.buttons[13]?.pressed || axisY > GAMEPAD_AXIS_DEADZONE;
+        const left = gamepad.buttons[14]?.pressed || axisX < -GAMEPAD_AXIS_DEADZONE;
+        const right = gamepad.buttons[15]?.pressed || axisX > GAMEPAD_AXIS_DEADZONE;
         const confirm = gamepad.buttons[0]?.pressed ?? false;
         const now = performance.now();
         // Analog stick noise near the deadzone threshold can flicker `held.prev`/`held.next`
@@ -144,14 +228,17 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
         const canMove = now - lastMoveTime >= GAMEPAD_MOVE_COOLDOWN_MS;
         if (prev && !held.prev && canMove) { moveSelection(-1); lastMoveTime = now; }
         if (next && !held.next && canMove) { moveSelection(1); lastMoveTime = now; }
+        if (left && !held.left && canMove) { selectedIndexRef.current === 0 ? cycleSource(-1) : moveSelection(-1); lastMoveTime = now; }
+        if (right && !held.right && canMove) { selectedIndexRef.current === 0 ? cycleSource(1) : moveSelection(1); lastMoveTime = now; }
         if (confirm && !held.confirm) runAction(selectedIndexRef.current);
         held.prev = prev; held.next = next; held.confirm = confirm;
+        held.left = left; held.right = right;
       }
       frame = requestAnimationFrame(poll);
     };
     frame = requestAnimationFrame(poll);
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [installState]);
 
   return (
     <main className="container">
@@ -172,10 +259,32 @@ function App({ buildInfo = "", modInfo: initialModInfo = "" }) {
         <img className="logo" src={alphaRingLogo} alt="AlphaRing" />
         {showLog ? <div className="log-panel" style={logPosition ?? undefined}><p className="log-message">{log || "Starting Up..."}</p></div> : (
           <div className="menu">
-            {MENU_BUTTONS.map((button, index) => <button key={button.label} ref={(element) => { buttonRefs.current[index] = element; }} type="button" className={`menu-button${index === selectedIndex ? " selected" : ""}`} onMouseEnter={() => setSelectedIndex(index)} onClick={() => runAction(index)}>{button.label}</button>)}
+            <label className="source-label" htmlFor="launch-source">Launch version</label>
+            <select
+              id="launch-source"
+              ref={(element) => { controlRefs.current[0] = element; }}
+              className={`source-select${selectedIndex === 0 ? " selected" : ""}`}
+              value={installState.selected}
+              onFocus={() => setSelectedIndex(0)}
+              onMouseEnter={() => setSelectedIndex(0)}
+              onChange={(event) => chooseSource(event.target.value)}
+            >
+              {SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}
+            </select>
+            {menuButtons.map((button, index) => <Fragment key={index}>
+              <button
+                ref={(element) => { controlRefs.current[index + 1] = element; }}
+                type="button"
+                disabled={button.disabled}
+                className={`menu-button${index + 1 === selectedIndex ? " selected" : ""}`}
+                onMouseEnter={() => setSelectedIndex(index + 1)}
+                onClick={() => runAction(index + 1)}
+              >{button.label}</button>
+              {index === 1 && <div className="install-status" role="status">{installedLabel(installState)}</div>}
+            </Fragment>)}
           </div>
         )}
-        <p className="info">{buildInfo} {modInfo}</p>
+        <p className="info">{buildInfo}{availableVersion ? ` Available: ${availableVersion}` : ""}</p>
       </div>
       <div>Fonts made from <a href="http://www.onlinewebfonts.com">Web Fonts</a> is licensed by CC BY 4.0</div>
     </main>

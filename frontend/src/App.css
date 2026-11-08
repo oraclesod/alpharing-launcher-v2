@@ -53,7 +53,7 @@ main {
 .menu {
   position: absolute;
   z-index: 200;
-  bottom: 20%;
+  bottom: 12%;
   left: 30%;
   width: 40%;
   display: flex;
@@ -61,6 +61,13 @@ main {
   gap: 12px;
 }
 
+.source-label {
+  color: white;
+  font-size: 18px;
+  text-align: left;
+}
+
+.source-select,
 .menu-button {
   padding: 12px 28px;
   font-family: "TVNord";
@@ -74,14 +81,39 @@ main {
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
+.source-select {
+  width: 100%;
+  appearance: auto;
+}
+
+.source-select option {
+  color: white;
+  background: #1b2636;
+}
+
+.install-status {
+  color: white;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 8px 12px;
+  border-radius: 4px;
+  text-align: center;
+}
+
 .menu-button:hover {
   background: rgba(0, 0, 0, 0.7);
 }
 
+.source-select.selected,
 .menu-button.selected {
   border-color: #62cbee;
   background: rgba(0, 0, 0, 0.8);
   transform: scale(1.05);
+}
+
+.menu-button:disabled {
+  opacity: 0.48;
+  cursor: default;
+  transform: none;
 }
 
 .log-panel {
@@ -115,8 +147,10 @@ main {
 }
 
 @media screen and (min-width: 1000px) {
+  .source-label,
+  .source-select,
   .menu-button {
-    font-size: 32px;
+    font-size: 26px;
   }
 
   .log-message {

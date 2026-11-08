@@ -17,6 +17,10 @@ var assets embed.FS
 var appIcon []byte
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--elevated-mod" {
+		os.Exit(runElevatedMod(os.Args[2:]))
+	}
+
 	// WebKitGTK's DMA-BUF renderer crashes on Wayland with "Error 71 (Protocol error)"
 	// on many compositor/driver combos when hardware acceleration is enabled.
 	// Disabling just the DMA-BUF path keeps GPU compositing (needed for <video>) working.

@@ -6,8 +6,16 @@ export function BackgroundVideoURLs() {
   return window['go']['main']['App']['BackgroundVideoURLs']();
 }
 
-export function LatestModVersion() {
-  return window['go']['main']['App']['LatestModVersion']();
+export function GetInstallState() {
+  return window['go']['main']['App']['GetInstallState']();
+}
+
+export function Install(arg1) {
+  return window['go']['main']['App']['Install'](arg1);
+}
+
+export function LatestModVersion(arg1) {
+  return window['go']['main']['App']['LatestModVersion'](arg1);
 }
 
 export function OpenInstallDir() {
@@ -16,4 +24,16 @@ export function OpenInstallDir() {
 
 export function Play(arg1) {
   return window['go']['main']['App']['Play'](arg1);
+}
+
+export function RecognizeExisting() {
+  return window['go']['main']['App']['RecognizeExisting']();
+}
+
+export function SelectSource(arg1) {
+  return window['go']['main']['App']['SelectSource'](arg1);
+}
+
+export function Uninstall() {
+  return window['go']['main']['App']['Uninstall']();
 }
